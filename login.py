@@ -15,16 +15,14 @@ def check_login():
 def logout():
     # 发送登出请求给后端
     payload = {"username": st.session_state["username"]}
-    response = requests.post(LOGOUT_API, json=payload)  # 使用 json 参数发送数据
+    response = requests.post(LOGOUT_API, json=payload)
 
     if response.status_code == 200:
         st.session_state["logged_in"] = False  # 清除登录状态
         st.session_state["username"] = None  # 清除用户名
         st.success("You have been logged out!")
-        st.session_state["logged_in"]==False
     else:
         st.error("Logout failed. Please try again.")
-
 
 # Streamlit 页面
 def main():
@@ -35,7 +33,7 @@ def main():
 
     # 如果用户已登录，显示登出按钮和主页面内容
     if st.session_state["logged_in"]:
-        st.subheader(f"Welcome, {st.session_state['username']}!")
+        st.subheader(f"Welcome, {st.session_state['username']}! (User ID: {st.session_state['user_id']})")
         if st.button("Logout"):
             logout()  # 调用登出功能
         return  # 已登录时停止显示登录和注册表单
@@ -72,10 +70,11 @@ def main():
                 payload = {"username": username, "password": password}
                 response = requests.post(LOGIN_API, json=payload)
                 if response.status_code == 200:
+                    data = response.json()
                     st.session_state["logged_in"] = True  # 设置登录状态
                     st.session_state["username"] = username  # 保存用户名
+                    st.session_state["user_id"] = data.get("user_id")  # 保存用户 ID
                     st.success("Login successful!")
-                    st.session_state["logged_in"]==True
                 else:
                     st.error("Error: " + response.json()["detail"])
             else:

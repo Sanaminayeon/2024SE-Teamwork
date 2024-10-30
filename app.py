@@ -1,142 +1,126 @@
-import streamlit as st
-from PIL import Image
-import matplotlib.pyplot as plt
-import numpy as np
+from fastapi import FastAPI, Depends, HTTPException, File, UploadFile
+from sqlalchemy import create_engine, Column, String, Integer, ForeignKey
+from sqlalchemy.ext.declarative import declarative_base
+from sqlalchemy.orm import sessionmaker, Session, relationship
+from pydantic import BaseModel
+import bcrypt
+import os
 
-# 页面配置
-st.set_page_config(
-    page_title="Streamlit 精美登录应用",
-    page_icon="🔒",
-    layout="wide",
-)
+# SQLite 数据库连接
+DATABASE_URL = "sqlite:///./test.db"
+engine = create_engine(DATABASE_URL)
+SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
+Base = declarative_base()
 
-# 登录验证函数
-def login(username, password):
-    # 假设用户名是 'admin'，密码是 'password123'
-    if username == "admin" and password == "password123":
-        return True
-    else:
-        return False
+# 创建用户数据库模型
+class User(Base):
+    __tablename__ = "users"
+    id = Column(Integer, primary_key=True, index=True)
+    username = Column(String, unique=True, index=True)
+    hashed_password = Column(String)
+    posts = relationship("Post", back_populates="user")
 
-# 登录页面函数
-def login_page():
-    st.markdown("""
-        <style>
-        .login-container {
-            background-color: #f0f2f6;
-            padding: 40px;
-            border-radius: 10px;
-            box-shadow: 0px 4px 12px rgba(0, 0, 0, 0.1);
-            max-width: 400px;
-            margin: auto;
+# 创建帖子数据库模型
+class Post(Base):
+    __tablename__ = "posts"
+    id = Column(Integer, primary_key=True, index=True)
+    title = Column(String, index=True)
+    content = Column(String)
+    user_id = Column(Integer, ForeignKey("users.id"))
+
+    user = relationship("User", back_populates="posts")
+
+Base.metadata.create_all(bind=engine)
+
+# FastAPI 实例
+app = FastAPI()
+
+# Pydantic 模型
+class UserCreate(BaseModel):
+    username: str
+    password: str
+
+class UserLogin(BaseModel):
+    username: str
+    password: str
+
+class UserLogout(BaseModel):
+    username: str
+
+class PostCreate(BaseModel):
+    title: str
+    content: str
+    user_id: int
+
+class PostResponse(BaseModel):
+    id: int
+    title: str
+    content: str
+    user_id: int
+
+# 依赖项：获取数据库会话
+def get_db():
+    db = SessionLocal()
+    try:
+        yield db
+    finally:
+        db.close()
+
+# 注册用户
+@app.post("/register")
+async def register(user: UserCreate, db: Session = Depends(get_db)):
+    existing_user = db.query(User).filter(User.username == user.username).first()
+    if existing_user:
+        raise HTTPException(status_code=400, detail="Username already taken")
+    
+    hashed_password = bcrypt.hashpw(user.password.encode('utf-8'), bcrypt.gensalt())
+    new_user = User(username=user.username, hashed_password=hashed_password)
+    db.add(new_user)
+    db.commit()
+    db.refresh(new_user)
+    return {"message": "User registered successfully"}
+
+# 用户登录
+@app.post("/login")
+async def login(user: UserLogin, db: Session = Depends(get_db)):
+    db_user = db.query(User).filter(User.username == user.username).first()
+    if not db_user:
+        raise HTTPException(status_code=400, detail="Invalid username or password")
+
+    if not bcrypt.checkpw(user.password.encode('utf-8'), db_user.hashed_password):
+        raise HTTPException(status_code=400, detail="Invalid username or password")
+
+    return {"message": "Login successful!", "user_id": db_user.id}
+
+# 创建帖子
+@app.post("/create_post")
+async def create_post(post: PostCreate, db: Session = Depends(get_db)):
+    db_user = db.query(User).filter(User.id == post.user_id).first()
+    if not db_user:
+        raise HTTPException(status_code=401, detail="User not found or not logged in")
+
+    new_post = Post(title=post.title, content=post.content, user_id=post.user_id)
+    db.add(new_post)
+    db.commit()
+    db.refresh(new_post)
+
+    return {"message": "Post created successfully", "post_id": new_post.id, "user_id": post.user_id}
+
+# 获取所有帖子
+@app.get("/posts", response_model=list[PostResponse])
+async def get_posts(db: Session = Depends(get_db)):
+    posts = db.query(Post).all()
+    return [
+        {
+            "id": post.id,
+            "title": post.title,
+            "content": post.content,
+            "user_id": post.user_id,
         }
-        .login-button {
-            width: 100%;
-            background-color: #4CAF50;
-            color: white;
-            border: none;
-            padding: 10px;
-            font-size: 16px;
-            border-radius: 5px;
-            cursor: pointer;
-        }
-        .login-button:hover {
-            background-color: #45a049;
-        }
-        h2 {
-            text-align: center;
-            color: #333;
-            font-family: 'Arial', sans-serif;
-        }
-        </style>
-        """, unsafe_allow_html=True)
+        for post in posts
+    ]
 
-    st.markdown("<div class='login-container'>", unsafe_allow_html=True)
-    st.markdown("<h2>🔒 登录</h2>", unsafe_allow_html=True)
-
-    username = st.text_input("用户名")
-    password = st.text_input("密码", type="password")
-    login_button = st.button("登录")
-
-    if login_button:
-        if login(username, password):
-            st.session_state['logged_in'] = True
-            st.success("登录成功！欢迎回来，{}".format(username))
-        else:
-            st.error("用户名或密码错误，请重试。")
-
-    st.markdown("</div>", unsafe_allow_html=True)
-
-# 精美界面函数
-def beautiful_dashboard():
-    st.title("✨ 精美的 Streamlit 应用 ✨")
-    st.markdown("""
-        <style>
-        .main {
-            background-color: #f0f2f6;
-            padding: 20px;
-            border-radius: 15px;
-            box-shadow: 0px 4px 8px rgba(0, 0, 0, 0.1);
-        }
-        h1 {
-            text-align: center;
-            font-family: 'Arial', sans-serif;
-            color: #4a4a4a;
-        }
-        </style>
-        """, unsafe_allow_html=True)
-
-    # 侧边栏配置
-    with st.sidebar:
-        st.image("https://via.placeholder.com/150", width=150)
-        st.title("快速导航")
-        st.markdown("通过侧边栏轻松导航")
-        st.radio("选择页面", ("首页", "图表展示", "联系信息"))
-        if st.button("退出登录"):
-            st.session_state['logged_in'] = False  # 退出登录时将状态重置
-
-    # 分割成两列的布局
-    col1, col2 = st.columns(2)
-
-    with col1:
-        st.subheader("简介")
-        st.write("这个页面是使用 Streamlit 创建的精美应用示例，集成了交互式组件和图表。")
-
-        # 上传图片的功能
-        st.subheader("上传图片")
-        uploaded_image = st.file_uploader("选择一张图片", type=["jpg", "png", "jpeg"])
-
-        if uploaded_image is not None:
-            image = Image.open(uploaded_image)
-            st.image(image, caption="上传的图片", use_column_width=True)
-
-    with col2:
-        st.subheader("动态数据展示")
-
-        # Matplotlib 图表展示
-        x = np.linspace(0, 10, 100)
-        y = np.sin(x)
-
-        fig, ax = plt.subplots()
-        ax.plot(x, y, color="orange", linewidth=2.5)
-        ax.set_title("动态生成的正弦波图")
-        ax.grid(True)
-
-        st.pyplot(fig)
-
-    # 添加底部的版权信息
-    st.markdown("""
-        <hr>
-        <div style='text-align: center;'>
-            <p>© 2024 精美的 Streamlit 应用. All rights reserved.</p>
-        </div>
-        """, unsafe_allow_html=True)
-
-# 主应用逻辑
-if 'logged_in' not in st.session_state:
-    st.session_state['logged_in'] = False  # 初始化登录状态
-
-if st.session_state['logged_in']:
-    beautiful_dashboard()  # 用户登录后显示精美界面
-else:
-    login_page()  # 未登录时显示登录页面
+# 用户登出
+@app.post("/logout")
+async def logout(user: UserLogout):
+    return {"message": f"User {user.username} logged out successfully"}
